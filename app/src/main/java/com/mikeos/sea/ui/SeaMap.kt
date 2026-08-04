@@ -44,6 +44,7 @@ class SeaMapState {
     @Volatile var meLat: Double? = null
     @Volatile var meLon: Double? = null
     @Volatile var seamarks: Boolean = true
+    @Volatile var depth: Boolean = true
 }
 
 private class MapHolder {
@@ -148,6 +149,18 @@ fun SeaMap(
 }
 
 private fun installLayers(style: Style) {
+    // Bathymetry — EMODnet depth-shaded chart (CC-BY). Inserted BELOW the base map's first label
+    // layer, so European seas render as a real depth chart (shaded by depth + coastlines) while OSM
+    // place labels stay on top. Where EMODnet has no tile (outside Europe) it draws nothing and the
+    // OSM base shows through. CC-BY: "© EMODnet Bathymetry".
+    val firstSymbol = style.layers.firstOrNull { it is SymbolLayer }?.id
+    val depthTiles = TileSet(
+        "2.1.0", "https://tiles.emodnet-bathymetry.eu/2020/baselayer/web_mercator/{z}/{x}/{y}.png"
+    ).apply { minZoom = 0f; maxZoom = 12f }
+    style.addSource(RasterSource("depth", depthTiles, 256))
+    val depthLayer = RasterLayer("depth-layer", "depth").withProperties(PropertyFactory.rasterOpacity(1.0f))
+    if (firstSymbol != null) style.addLayerBelow(depthLayer, firstSymbol) else style.addLayer(depthLayer)
+
     // Nautical seamark overlay (OpenSeaMap raster).
     val tiles = TileSet("2.1.0", "https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png").apply {
         minZoom = 0f; maxZoom = 18f
@@ -210,6 +223,9 @@ private fun pushData(holder: MapHolder, state: SeaMapState) {
     style.getSourceAs<GeoJsonSource>(SRC_VESSELS)?.setGeoJson(state.vesselsJson)
     style.getLayer("seamark-layer")?.setProperties(
         PropertyFactory.visibility(if (state.seamarks) "visible" else "none")
+    )
+    style.getLayer("depth-layer")?.setProperties(
+        PropertyFactory.visibility(if (state.depth) "visible" else "none")
     )
     val lat = state.meLat; val lon = state.meLon
     val meJson = if (lat != null && lon != null)

@@ -119,6 +119,7 @@ private fun SeaMapScreen() {
     var nearCount by remember { mutableStateOf<Int?>(null) }
     var tapped by remember { mutableStateOf<Map<String, String>?>(null) }
     var seamarks by remember { mutableStateOf(true) }
+    var depth by remember { mutableStateOf(true) }
     var locating by remember { mutableStateOf(false) }
     var focusName by remember { mutableStateOf(SeaMikeAgent.focusName) }
 
@@ -163,6 +164,7 @@ private fun SeaMapScreen() {
 
     LaunchedEffect(Unit) { locate() }
     LaunchedEffect(seamarks) { mapState.seamarks = seamarks; dataNonce++ }
+    LaunchedEffect(depth) { mapState.depth = depth; dataNonce++ }
 
     Box(modifier = Modifier.fillMaxSize()) {
         SeaMap(
@@ -214,6 +216,9 @@ private fun SeaMapScreen() {
             }
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
+                FilterChip(selected = depth, onClick = { depth = !depth },
+                    label = { Text("Depth") })
+                Spacer(Modifier.width(8.dp))
                 FilterChip(selected = seamarks, onClick = { seamarks = !seamarks },
                     label = { Text("Seamarks") },
                     leadingIcon = { Icon(Icons.Filled.Anchor, contentDescription = null, modifier = Modifier.width(16.dp).height(16.dp)) })
@@ -239,6 +244,13 @@ private fun SeaMapScreen() {
                 strokeWidth = 2.dp, color = Color.Black)
             else Icon(Icons.Filled.MyLocation, contentDescription = "My location", tint = Color.Black)
         }
+
+        // Attribution (CC-BY / ODbL / NLOD require credit).
+        Text(
+            "Depth © EMODnet · © OpenStreetMap · seamarks © OpenSeaMap · AIS © Kystverket",
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = 10.dp, end = 90.dp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 9.sp,
+        )
 
         // Vessel detail sheet
         tapped?.let { v -> VesselSheet(v) { tapped = null } }
