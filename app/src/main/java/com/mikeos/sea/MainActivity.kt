@@ -134,6 +134,22 @@ private fun SeaMapScreen() {
     var recording by remember { mutableStateOf(false) }
     var tripDistKm by remember { mutableStateOf(0.0) }
     var tripMaxSog by remember { mutableStateOf(0.0) }
+    var waypoint by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var mob by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+
+    fun rebuildNav() {
+        val me = mapState.meLat?.let { la -> mapState.meLon?.let { lo -> la to lo } }
+        val parts = ArrayList<String>()
+        waypoint?.let { wp ->
+            parts.add("""{"type":"Feature","geometry":{"type":"Point","coordinates":[${wp.second},${wp.first}]},"properties":{"kind":"waypoint"}}""")
+            if (me != null) parts.add("""{"type":"Feature","geometry":{"type":"LineString","coordinates":[[${me.second},${me.first}],[${wp.second},${wp.first}]]},"properties":{"kind":"course"}}""")
+        }
+        mob?.let { m ->
+            parts.add("""{"type":"Feature","geometry":{"type":"Point","coordinates":[${m.second},${m.first}]},"properties":{"kind":"mob"}}""")
+        }
+        mapState.navJson = """{"type":"FeatureCollection","features":[${parts.joinToString(",")}]}"""
+        dataNonce++
+    }
 
     fun loadViewport(w: Double, s: Double, e: Double, n: Double) {
         scope.launch {
@@ -212,6 +228,7 @@ private fun SeaMapScreen() {
             state = mapState, dataNonce = dataNonce, flyTo = flyTo, flyNonce = flyNonce,
             onViewport = { w, s, e, n -> loadViewport(w, s, e, n) },
             onVesselTap = { tapped = it },
+            onLongPress = { la, lo -> waypoint = la to lo; rebuildNav() },
             modifier = Modifier.fillMaxSize(),
         )
 
@@ -273,6 +290,20 @@ private fun SeaMapScreen() {
                     )
                 }
             }
+        }
+
+        // MOB (man-overboard) FAB — marks / clears current position
+        FloatingActionButton(
+            onClick = {
+                if (mob != null) mob = null
+                else { val la = mapState.meLat; val lo = mapState.meLon; if (la != null && lo != null) mob = la to lo }
+                rebuildNav()
+            },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 152.dp),
+            containerColor = if (mob != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.surface,
+        ) {
+            Text("MOB", color = if (mob != null) Color.White else MaterialTheme.colorScheme.error,
+                fontWeight = FontWeight.Bold, fontSize = 13.sp)
         }
 
         // Record-track FAB (above the locate FAB)
@@ -339,6 +370,38 @@ private fun SeaMapScreen() {
             modifier = Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = 6.dp, end = 90.dp),
             color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 8.sp,
         )
+
+        // Waypoint readout (distance / bearing / ETA) — tap to clear
+        waypoint?.let { wp ->
+            val mLat = mapState.meLat; val mLon = mapState.meLon
+            val nm = if (mLat != null && mLon != null) haversineKm(mLat, mLon, wp.first, wp.second) * 0.539957 else null
+            val brg = if (mLat != null && mLon != null) bearingDeg(mLat, mLon, wp.first, wp.second) else null
+            val etaMin = if (nm != null && (sog ?: 0.0) > 0.3) nm / sog!! * 60.0 else null
+            Surface(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 82.dp)
+                    .clickable { waypoint = null; rebuildNav() },
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.95f), shadowElevation = 6.dp,
+            ) {
+                Text(
+                    "→ WPT   ${nm?.let { "%.2f NM".format(it) } ?: "–"}   BRG ${brg?.let { "%03.0f°".format(it) } ?: "–"}   ETA ${etaMin?.let { "%.0f min".format(it) } ?: "–"}   ✕",
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+
+        // Shallow-water alarm
+        if (depthUnderMe != null && depthUnderMe!! < 3.0) {
+            Surface(
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 150.dp),
+                shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.error,
+            ) {
+                Text("⚠  SHALLOW  ${"%.1f".format(depthUnderMe)} m",
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
+        }
 
         // Vessel detail sheet
         tapped?.let { v -> VesselSheet(v) { tapped = null } }
@@ -444,4 +507,11 @@ private fun trackToGeoJson(track: List<Pair<Double, Double>>): String {
     if (track.size < 2) return """{"type":"FeatureCollection","features":[]}"""
     val coords = track.joinToString(",") { "[${it.second},${it.first}]" }
     return """{"type":"Feature","geometry":{"type":"LineString","coordinates":[$coords]},"properties":{}}"""
+}
+
+private fun bearingDeg(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+    val p = Math.PI / 180
+    val y = Math.sin((lon2 - lon1) * p) * Math.cos(lat2 * p)
+    val x = Math.cos(lat1 * p) * Math.sin(lat2 * p) - Math.sin(lat1 * p) * Math.cos(lat2 * p) * Math.cos((lon2 - lon1) * p)
+    return (Math.toDegrees(Math.atan2(y, x)) + 360) % 360
 }

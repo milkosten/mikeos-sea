@@ -48,6 +48,7 @@ class SeaMapState {
     @Volatile var depth: Boolean = true
     @Volatile var soundingsJson: String = EMPTY_FC
     @Volatile var trackJson: String = EMPTY_FC
+    @Volatile var navJson: String = EMPTY_FC   // waypoint + course line + MOB, one FeatureCollection (kind=…)
 }
 
 private class MapHolder {
@@ -76,12 +77,14 @@ fun SeaMap(
     flyNonce: Int,                  // bump to trigger a fly (even to the same point)
     onViewport: (w: Double, s: Double, e: Double, n: Double) -> Unit,
     onVesselTap: (Map<String, String>) -> Unit,
+    onLongPress: (Double, Double) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val mapView = rememberMapViewWithLifecycle()
     val holder = remember { MapHolder() }
     val onViewportState by rememberUpdatedState(onViewport)
     val onVesselTapState by rememberUpdatedState(onVesselTap)
+    val onLongPressState by rememberUpdatedState(onLongPress)
     val styleUrl = "${BuildConfig.BASEMAP_URL}/style.json"
 
     AndroidView(
@@ -130,6 +133,9 @@ fun SeaMap(
                         onVesselTapState(m)
                         true
                     } else false
+                }
+                map.addOnMapLongClickListener { latLng ->
+                    onLongPressState(latLng.latitude, latLng.longitude); true
                 }
             }
             mapView
@@ -282,6 +288,32 @@ private fun installLayers(style: Style) {
         )
     )
 
+    // Navigation: course line + waypoint ring + MOB dot (one FeatureCollection, filtered by 'kind').
+    style.addSource(GeoJsonSource("nav"))
+    style.addLayer(
+        LineLayer("nav-line", "nav").withProperties(
+            PropertyFactory.lineColor(Color.parseColor("#3AA0FF")),
+            PropertyFactory.lineWidth(2.5f),
+            PropertyFactory.lineDasharray(arrayOf(2f, 2f)),
+        ).withFilter(Expression.eq(Expression.get("kind"), Expression.literal("course")))
+    )
+    style.addLayer(
+        CircleLayer("nav-wp", "nav").withProperties(
+            PropertyFactory.circleRadius(9f),
+            PropertyFactory.circleColor(Color.parseColor("#203AA0FF")),
+            PropertyFactory.circleStrokeColor(Color.parseColor("#3AA0FF")),
+            PropertyFactory.circleStrokeWidth(3f),
+        ).withFilter(Expression.eq(Expression.get("kind"), Expression.literal("waypoint")))
+    )
+    style.addLayer(
+        CircleLayer("nav-mob", "nav").withProperties(
+            PropertyFactory.circleRadius(9f),
+            PropertyFactory.circleColor(Color.parseColor("#e53935")),
+            PropertyFactory.circleStrokeColor(Color.WHITE),
+            PropertyFactory.circleStrokeWidth(3f),
+        ).withFilter(Expression.eq(Expression.get("kind"), Expression.literal("mob")))
+    )
+
     lightenBase(style)
 }
 
@@ -318,6 +350,7 @@ private fun pushData(holder: MapHolder, state: SeaMapState) {
     style.getLayer("litto-layer")?.setProperties(PropertyFactory.visibility(depthVis))
     style.getSourceAs<GeoJsonSource>("soundings-dyn")?.setGeoJson(state.soundingsJson)
     style.getSourceAs<GeoJsonSource>("track")?.setGeoJson(state.trackJson)
+    style.getSourceAs<GeoJsonSource>("nav")?.setGeoJson(state.navJson)
     val lat = state.meLat; val lon = state.meLon
     val meJson = if (lat != null && lon != null)
         """{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[$lon,$lat]},"properties":{}}]}"""
