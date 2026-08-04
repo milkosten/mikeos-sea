@@ -9,9 +9,14 @@ same backend, **`marine-api.osmike.com`** — live vessels from the Kystverket A
 (NLOD) cached on the 242 box, plus Photon-proxied harbour/place search.
 
 ## What it does
-- **Nearby vessels** — a live list of ships around your focus point (name, type, speed,
-  distance, destination); tap one for full detail (MMSI, callsign, course, position).
-- **Search** — find a harbour or coastal place (view-biased) and re-focus the water there.
+- **Map-first** — a full-screen MapLibre chart (self-hosted dark OSM basemap + OpenSeaMap
+  nautical seamark overlay) with **live vessels** drawn on it (teal + heading arrow when under
+  way, grey when moored). Tap a vessel for detail (type, speed, course, MMSI, callsign, destination).
+  Vessels reload for whatever you pan/zoom to.
+- **Your GPS** — reads the device's shared fix from the on-device daemon (`GET /api/location`,
+  the single location authority — apps don't run their own GPS) and centres the map on you;
+  a locate button re-centres.
+- **Search** — find a harbour or coastal place (view-biased) and fly the map there.
 - **Agent** — embeds the shared MikeAgent runtime: §0 self-registration with the on-device
   daemon, a resident heartbeat, the live hive, and the mandatory Agent Inspector. Its two
   marine skills (`nearby_vessels`, `find_place`) run over the live AIS feed.

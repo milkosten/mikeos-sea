@@ -14,8 +14,8 @@ android {
         applicationId = "com.mikeos.sea"
         minSdk = 31
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-live-vessels"
+        versionCode = 2
+        versionName = "0.2.0-map-first"
 
         // MikeDaemon runs ON the phone (loopback). Auth token is pinned for dev.
         buildConfigField("String", "DAEMON_BASE_URL", "\"https://127.0.0.1:7743\"")
@@ -25,7 +25,16 @@ android {
             "\"7bdc23451b18b5801036f992b66a872670975d19\""
         )
 
+        // Self-hosted MapLibre vector basemap (loads "$BASEMAP_URL/style.json").
+        buildConfigField("String", "BASEMAP_URL", "\"https://tiles.osmike.com\"")
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // MapLibre ships native .so per ABI. These APKs go OTA over cellular, so drop x86
+        // emulator libs — arm64-v8a for modern phones, armeabi-v7a for older 32-bit ones.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     buildTypes {
@@ -76,6 +85,10 @@ dependencies {
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
+
+    // MapLibre GL Native — the FOSS vector map engine rendering the self-hosted OSM basemap.
+    // Its HTTP stack is pointed at our DoH client (this ROM's system DNS is flaky). See MapLibreInit.
+    implementation("org.maplibre.gl:android-sdk:11.8.0")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")

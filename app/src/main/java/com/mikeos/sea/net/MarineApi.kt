@@ -46,6 +46,19 @@ object MarineApi {
         val country: String?,
     )
 
+    /** Raw vessel FeatureCollection GeoJSON for a bbox — fed straight into the map source. */
+    suspend fun rawVessels(minLon: Double, minLat: Double, maxLon: Double, maxLat: Double): String? =
+        withContext(Dispatchers.IO) {
+            val url = "$BASE/live/vessels?bbox=$minLon,$minLat,$maxLon,$maxLat&points=true"
+            runCatching {
+                client.newCall(Request.Builder().url(url).header("User-Agent", "MikeSea/1.0").build())
+                    .execute().use { resp ->
+                        val body = resp.body?.string()
+                        if (resp.isSuccessful && !body.isNullOrBlank()) body else null
+                    }
+            }.getOrNull()
+        }
+
     private suspend fun getJson(url: String): JSONObject? = withContext(Dispatchers.IO) {
         runCatching {
             client.newCall(Request.Builder().url(url).header("User-Agent", "MikeSea/1.0").build())
