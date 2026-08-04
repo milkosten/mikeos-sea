@@ -169,6 +169,7 @@ private fun SeaMapScreen() {
         }
         mob?.let { m ->
             parts.add("""{"type":"Feature","geometry":{"type":"Point","coordinates":[${m.second},${m.first}]},"properties":{"kind":"mob"}}""")
+            if (me != null) parts.add("""{"type":"Feature","geometry":{"type":"LineString","coordinates":[[${me.second},${me.first}],[${m.second},${m.first}]]},"properties":{"kind":"mobline"}}""")
         }
         mapState.navJson = """{"type":"FeatureCollection","features":[${parts.joinToString(",")}]}"""
         dataNonce++
@@ -238,6 +239,8 @@ private fun SeaMapScreen() {
                         mapState.trackJson = trackToGeoJson(track)
                     }
                 }
+                // Redraw the me→waypoint / me→MOB steer lines from the new position.
+                if (mob != null || waypoint != null) rebuildNav()
                 dataNonce++
                 depthUnderMe = MarineApi.depthAt(la, lo)
             }
@@ -422,6 +425,28 @@ private fun SeaMapScreen() {
                     "→ WPT   ${nm?.let { "%.2f NM".format(it) } ?: "–"}   BRG ${brg?.let { "%03.0f°".format(it) } ?: "–"}   ETA ${etaMin?.let { "%.0f min".format(it) } ?: "–"}   ✕",
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                     color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+
+        // MOB emergency readout — live bearing + distance from current position back to the
+        // dropped man-overboard point. Reads `sog` (a Compose state bumped every 6s GPS tick) so it
+        // recomposes as the boat moves; the @Volatile mapState.meLat/meLon alone wouldn't trigger it.
+        mob?.let { m ->
+            val liveTick = sog   // touch a changing Compose state to force recomposition each GPS tick
+            val mLat = mapState.meLat; val mLon = mapState.meLon
+            val nm = if (mLat != null && mLon != null) haversineKm(mLat, mLon, m.first, m.second) * 0.539957 else null
+            val brg = if (mLat != null && mLon != null) bearingDeg(mLat, mLon, m.first, m.second) else null
+            Surface(
+                modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding()
+                    .padding(bottom = if (waypoint != null) 128.dp else 84.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.error, shadowElevation = 8.dp,
+            ) {
+                Text(
+                    "⚠ MOB   ${brg?.let { "%03.0f°".format(it) } ?: "–"}   ${nm?.let { "%.2f NM".format(it) } ?: "–"}",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold,
                 )
             }
         }

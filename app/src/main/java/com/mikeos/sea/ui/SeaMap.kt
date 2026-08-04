@@ -321,6 +321,15 @@ private fun installLayers(style: Style) {
             PropertyFactory.circleStrokeWidth(3f),
         ).withFilter(Expression.eq(Expression.get("kind"), Expression.literal("waypoint")))
     )
+    // Red steer-back line from the boat to the man-overboard point (mirrors the course line).
+    style.addLayer(
+        LineLayer("nav-mobline", "nav").withProperties(
+            PropertyFactory.lineColor(Color.parseColor("#e53935")),
+            PropertyFactory.lineWidth(3f),
+            PropertyFactory.lineCap("round"),
+            PropertyFactory.lineJoin("round"),
+        ).withFilter(Expression.eq(Expression.get("kind"), Expression.literal("mobline")))
+    )
     style.addLayer(
         CircleLayer("nav-mob", "nav").withProperties(
             PropertyFactory.circleRadius(9f),
