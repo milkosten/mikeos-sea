@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
@@ -145,21 +146,23 @@ fun SeaMap(
             }
             mapView
         },
-        update = {
-            // Push latest data + honour fly requests. Keyed by the nonces via recomposition.
-            pushData(holder, state)
-            if (flyTo != null) {
-                holder.map?.easeCamera(
-                    CameraUpdateFactory.newCameraPosition(
-                        CameraPosition.Builder().target(flyTo).zoom(12.0).build()
-                    ), 700
-                )
-            }
-        },
+        update = { pushData(holder, state) },
     )
 
-    // Recompose the AndroidView update lambda when data/fly nonces change.
-    DisposableEffect(dataNonce, flyNonce) { onDispose { } }
+    // AndroidView's update lambda doesn't observe SeaMapState's @Volatile fields, so it won't
+    // re-run when data changes. Drive the pushes explicitly from keyed effects: pushData whenever
+    // the data nonce bumps (soundings/vessels/track/nav), and ease the camera on a fly request.
+    LaunchedEffect(dataNonce) { pushData(holder, state) }
+    LaunchedEffect(flyNonce) {
+        val f = flyTo
+        if (f != null && flyNonce > 0) {
+            holder.map?.easeCamera(
+                CameraUpdateFactory.newCameraPosition(
+                    CameraPosition.Builder().target(f).zoom(14.0).build()
+                ), 700
+            )
+        }
+    }
 }
 
 private fun installLayers(style: Style) {
@@ -201,29 +204,37 @@ private fun installLayers(style: Style) {
     val littoLayer = RasterLayer("litto-layer", "litto").withProperties(PropertyFactory.rasterOpacity(1.0f))
     if (firstSymbol != null) style.addLayerBelow(littoLayer, firstSymbol) else style.addLayer(littoLayer)
 
-    // Dynamic spot-soundings (depth numbers) — ~20 evenly-spread per viewport, refreshed on camera idle.
+    // Dynamic spot-soundings (depth numbers) — ~fixed count evenly-spread per viewport, refreshed on
+    // camera idle. Added at the TOP of the stack (above all raster overlays) so the numbers are never
+    // occluded by the bathymetry raster. A small position dot marks each sounding (real-chart style).
     style.addSource(GeoJsonSource("soundings-dyn"))
+    val dotColor = Expression.switchCase(
+        Expression.lt(Expression.toNumber(Expression.get("d")), Expression.literal(5)), Expression.rgb(178, 58, 46),
+        Expression.lt(Expression.toNumber(Expression.get("d")), Expression.literal(10)), Expression.rgb(10, 74, 122),
+        Expression.rgb(0, 34, 64)
+    )
+    val dotLayer = CircleLayer("soundings-dot", "soundings-dyn").withProperties(
+        PropertyFactory.circleRadius(2.2f),
+        PropertyFactory.circleColor(dotColor),
+        PropertyFactory.circleOpacity(0.9f),
+    )
+    dotLayer.minZoom = 9f
+    style.addLayer(dotLayer)
     val sLayer = SymbolLayer("soundings-layer", "soundings-dyn").withProperties(
-        PropertyFactory.textField(Expression.get("lbl")),
+        PropertyFactory.textField(Expression.toString(Expression.get("lbl"))),
         PropertyFactory.textFont(arrayOf("Noto Sans Regular")),
         PropertyFactory.textSize(
             Expression.interpolate(Expression.linear(), Expression.zoom(),
-                Expression.stop(9, 10f), Expression.stop(14, 11f), Expression.stop(18, 13f))
+                Expression.stop(9, 11f), Expression.stop(14, 13f), Expression.stop(18, 15f))
         ),
-        PropertyFactory.textColor(
-            Expression.switchCase(
-                Expression.lt(Expression.toNumber(Expression.get("d")), Expression.literal(5)), Expression.rgb(178, 58, 46),
-                Expression.lt(Expression.toNumber(Expression.get("d")), Expression.literal(10)), Expression.rgb(10, 74, 122),
-                Expression.rgb(0, 34, 64)
-            )
-        ),
-        PropertyFactory.textHaloColor(Color.WHITE),
-        PropertyFactory.textHaloWidth(0.8f),
+        PropertyFactory.textColor(dotColor),
+        PropertyFactory.textHaloWidth(0f),
+        PropertyFactory.textOffset(arrayOf(0f, 0.8f)),
         PropertyFactory.textAllowOverlap(true),
         PropertyFactory.textIgnorePlacement(true),
     )
     sLayer.minZoom = 9f
-    if (firstSymbol != null) style.addLayerBelow(sLayer, firstSymbol) else style.addLayer(sLayer)
+    style.addLayer(sLayer)
 
     // Nautical seamark overlay (OpenSeaMap raster).
     val tiles = TileSet("2.1.0", "https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png").apply {
@@ -366,7 +377,9 @@ private fun pushData(holder: MapHolder, state: SeaMapState) {
         holder.didInitialCamera = true
         holder.map?.easeCamera(
             CameraUpdateFactory.newCameraPosition(
-                CameraPosition.Builder().target(LatLng(lat, lon)).zoom(11.0).build()
+                // z14: tight enough that the sounding grid lands inside the (currently small)
+                // Litto3D coverage patch, so depth numbers actually appear on the first GPS fix.
+                CameraPosition.Builder().target(LatLng(lat, lon)).zoom(14.0).build()
             ), 600
         )
     }
