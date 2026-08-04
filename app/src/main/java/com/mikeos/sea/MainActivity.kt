@@ -217,7 +217,7 @@ private fun SeaMapScreen() {
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 FilterChip(selected = depth, onClick = { depth = !depth },
-                    label = { Text("Depth") })
+                    label = { Text("Sea chart") })
                 Spacer(Modifier.width(8.dp))
                 FilterChip(selected = seamarks, onClick = { seamarks = !seamarks },
                     label = { Text("Seamarks") },
@@ -247,7 +247,7 @@ private fun SeaMapScreen() {
 
         // Attribution (CC-BY / ODbL / NLOD require credit).
         Text(
-            "Depth © EMODnet · © OpenStreetMap · seamarks © OpenSeaMap · AIS © Kystverket",
+            "Charts © Kartverket / EMODnet · © OpenStreetMap · seamarks © OpenSeaMap · AIS © Kystverket",
             modifier = Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = 10.dp, end = 90.dp),
             color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 9.sp,
         )

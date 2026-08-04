@@ -161,6 +161,16 @@ private fun installLayers(style: Style) {
     val depthLayer = RasterLayer("depth-layer", "depth").withProperties(PropertyFactory.rasterOpacity(1.0f))
     if (firstSymbol != null) style.addLayerBelow(depthLayer, firstSymbol) else style.addLayer(depthLayer)
 
+    // Kartverket Sjøkart — the OFFICIAL Norwegian nautical chart (NLOD): depth areas, soundings,
+    // buoys, beacons, lights, fairways/channels, port entrances. XYZ cache (note {z}/{y}/{x} order).
+    // Sits above the EMODnet depth shading; covers Norwegian waters, falls back to EMODnet/OSM elsewhere.
+    val chartTiles = TileSet(
+        "2.1.0", "https://cache.kartverket.no/v1/wmts/1.0.0/sjokartraster/default/webmercator/{z}/{y}/{x}.png"
+    ).apply { minZoom = 0f; maxZoom = 18f }
+    style.addSource(RasterSource("seachart", chartTiles, 256))
+    val chartLayer = RasterLayer("seachart-layer", "seachart").withProperties(PropertyFactory.rasterOpacity(1.0f))
+    if (firstSymbol != null) style.addLayerBelow(chartLayer, firstSymbol) else style.addLayer(chartLayer)
+
     // Nautical seamark overlay (OpenSeaMap raster).
     val tiles = TileSet("2.1.0", "https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png").apply {
         minZoom = 0f; maxZoom = 18f
@@ -224,9 +234,9 @@ private fun pushData(holder: MapHolder, state: SeaMapState) {
     style.getLayer("seamark-layer")?.setProperties(
         PropertyFactory.visibility(if (state.seamarks) "visible" else "none")
     )
-    style.getLayer("depth-layer")?.setProperties(
-        PropertyFactory.visibility(if (state.depth) "visible" else "none")
-    )
+    val depthVis = if (state.depth) "visible" else "none"
+    style.getLayer("depth-layer")?.setProperties(PropertyFactory.visibility(depthVis))
+    style.getLayer("seachart-layer")?.setProperties(PropertyFactory.visibility(depthVis))
     val lat = state.meLat; val lon = state.meLon
     val meJson = if (lat != null && lon != null)
         """{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[$lon,$lat]},"properties":{}}]}"""
