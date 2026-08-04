@@ -171,6 +171,16 @@ private fun installLayers(style: Style) {
     val chartLayer = RasterLayer("seachart-layer", "seachart").withProperties(PropertyFactory.rasterOpacity(1.0f))
     if (firstSymbol != null) style.addLayerBelow(chartLayer, firstSymbol) else style.addLayer(chartLayer)
 
+    // EMODnet depth contours (isobaths) via our own tile proxy (marine-api re-serves EMODnet's
+    // contour WMS as XYZ). Transparent lines over the depth shading — covers all European seas
+    // incl. the whole French coast, where SHOM's official chart isn't openly licensed.
+    val contourTiles = TileSet(
+        "2.1.0", "https://marine-api.osmike.com/contours/{z}/{x}/{y}.png"
+    ).apply { minZoom = 0f; maxZoom = 12f }
+    style.addSource(RasterSource("contours", contourTiles, 256))
+    val contourLayer = RasterLayer("contours-layer", "contours").withProperties(PropertyFactory.rasterOpacity(0.9f))
+    if (firstSymbol != null) style.addLayerBelow(contourLayer, firstSymbol) else style.addLayer(contourLayer)
+
     // Nautical seamark overlay (OpenSeaMap raster).
     val tiles = TileSet("2.1.0", "https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png").apply {
         minZoom = 0f; maxZoom = 18f
@@ -237,6 +247,7 @@ private fun pushData(holder: MapHolder, state: SeaMapState) {
     val depthVis = if (state.depth) "visible" else "none"
     style.getLayer("depth-layer")?.setProperties(PropertyFactory.visibility(depthVis))
     style.getLayer("seachart-layer")?.setProperties(PropertyFactory.visibility(depthVis))
+    style.getLayer("contours-layer")?.setProperties(PropertyFactory.visibility(depthVis))
     val lat = state.meLat; val lon = state.meLon
     val meJson = if (lat != null && lon != null)
         """{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[$lon,$lat]},"properties":{}}]}"""
