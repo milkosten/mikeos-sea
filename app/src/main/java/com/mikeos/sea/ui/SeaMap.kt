@@ -102,8 +102,19 @@ fun SeaMap(
                 }
                 map.addOnMapClickListener { latLng ->
                     val pf = map.projection.toScreenLocation(latLng)
-                    val feats = map.queryRenderedFeatures(pf, "vessels-dot")
-                    val f = feats.firstOrNull()
+                    // Query a tolerance box, not a single pixel — the dots are tiny (3–7px), so an
+                    // exact hit is impossible on a touchscreen. Pick the vessel nearest the tap.
+                    val tol = 26f
+                    val box = android.graphics.RectF(pf.x - tol, pf.y - tol, pf.x + tol, pf.y + tol)
+                    val feats = map.queryRenderedFeatures(box, "vessels-dot")
+                    val f = feats.minByOrNull { feat ->
+                        val p = feat.geometry() as? org.maplibre.geojson.Point
+                        if (p == null) Double.MAX_VALUE else {
+                            val sp = map.projection.toScreenLocation(LatLng(p.latitude(), p.longitude()))
+                            val dx = (sp.x - pf.x).toDouble(); val dy = (sp.y - pf.y).toDouble()
+                            dx * dx + dy * dy
+                        }
+                    }
                     if (f != null) {
                         val m = HashMap<String, String>()
                         f.properties()?.entrySet()?.forEach { (k, v) ->
