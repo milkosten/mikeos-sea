@@ -59,6 +59,45 @@ object MarineApi {
             }.getOrNull()
         }
 
+    /** ~nx*ny evenly-spread spot-soundings for the viewport bbox — raw GeoJSON for the map. */
+    suspend fun rawSoundings(minLon: Double, minLat: Double, maxLon: Double, maxLat: Double, nx: Int, ny: Int): String? =
+        withContext(Dispatchers.IO) {
+            val url = "$BASE/soundings?bbox=$minLon,$minLat,$maxLon,$maxLat&nx=$nx&ny=$ny"
+            runCatching {
+                client.newCall(Request.Builder().url(url).header("User-Agent", "MikeSea/1.0").build())
+                    .execute().use { resp ->
+                        val body = resp.body?.string()
+                        if (resp.isSuccessful && !body.isNullOrBlank()) body else null
+                    }
+            }.getOrNull()
+        }
+
+    /** Survey depth (m, positive) under a point, or null if land / no data. */
+    suspend fun depthAt(lat: Double, lon: Double): Double? {
+        val gj = getJson("$BASE/depth-at?lat=$lat&lon=$lon") ?: return null
+        return dbl(gj, "depth_m")
+    }
+
+    data class Weather(
+        val windKn: Double?, val windDir: Double?, val gustKn: Double?,
+        val tempC: Double?, val pressureHpa: Double?, val weatherCode: Int?, val visibilityM: Double?,
+        val waveM: Double?, val waveDir: Double?, val wavePeriodS: Double?,
+        val swellM: Double?, val swellDir: Double?, val swellPeriodS: Double?,
+    )
+
+    /** Marine weather (wind, gusts, waves, swell) for a point — Open-Meteo via marine-api. */
+    suspend fun weather(lat: Double, lon: Double): Weather? {
+        val gj = getJson("$BASE/weather?lat=$lat&lon=$lon") ?: return null
+        val c = gj.optJSONObject("current") ?: return null
+        val wc = if (c.has("weather_code") && !c.isNull("weather_code")) c.optInt("weather_code") else null
+        return Weather(
+            dbl(c, "wind_kn"), dbl(c, "wind_dir"), dbl(c, "gust_kn"),
+            dbl(c, "temp_c"), dbl(c, "pressure_hpa"), wc, dbl(c, "visibility_m"),
+            dbl(c, "wave_m"), dbl(c, "wave_dir"), dbl(c, "wave_period_s"),
+            dbl(c, "swell_m"), dbl(c, "swell_dir"), dbl(c, "swell_period_s"),
+        )
+    }
+
     private suspend fun getJson(url: String): JSONObject? = withContext(Dispatchers.IO) {
         runCatching {
             client.newCall(Request.Builder().url(url).header("User-Agent", "MikeSea/1.0").build())

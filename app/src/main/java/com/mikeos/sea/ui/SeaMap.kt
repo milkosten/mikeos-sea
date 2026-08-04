@@ -25,6 +25,7 @@ import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.layers.RasterLayer
 import org.maplibre.android.style.layers.SymbolLayer
@@ -45,6 +46,7 @@ class SeaMapState {
     @Volatile var meLon: Double? = null
     @Volatile var seamarks: Boolean = true
     @Volatile var depth: Boolean = true
+    @Volatile var soundingsJson: String = EMPTY_FC
 }
 
 private class MapHolder {
@@ -181,6 +183,36 @@ private fun installLayers(style: Style) {
     val contourLayer = RasterLayer("contours-layer", "contours").withProperties(PropertyFactory.rasterOpacity(0.9f))
     if (firstSymbol != null) style.addLayerBelow(contourLayer, firstSymbol) else style.addLayer(contourLayer)
 
+    // SHOM Litto3D 1m survey depth (Licence Ouverte) — real harbour bathymetry (French coast, expanding).
+    val littoTiles = TileSet("2.1.0", "https://marine.osmike.com/litto/{z}/{x}/{y}.png").apply { minZoom = 0f; maxZoom = 18f }
+    style.addSource(RasterSource("litto", littoTiles, 256))
+    val littoLayer = RasterLayer("litto-layer", "litto").withProperties(PropertyFactory.rasterOpacity(1.0f))
+    if (firstSymbol != null) style.addLayerBelow(littoLayer, firstSymbol) else style.addLayer(littoLayer)
+
+    // Dynamic spot-soundings (depth numbers) — ~20 evenly-spread per viewport, refreshed on camera idle.
+    style.addSource(GeoJsonSource("soundings-dyn"))
+    val sLayer = SymbolLayer("soundings-layer", "soundings-dyn").withProperties(
+        PropertyFactory.textField(Expression.get("lbl")),
+        PropertyFactory.textFont(arrayOf("Noto Sans Regular")),
+        PropertyFactory.textSize(
+            Expression.interpolate(Expression.linear(), Expression.zoom(),
+                Expression.stop(9, 10f), Expression.stop(14, 11f), Expression.stop(18, 13f))
+        ),
+        PropertyFactory.textColor(
+            Expression.switchCase(
+                Expression.lt(Expression.toNumber(Expression.get("d")), Expression.literal(5)), Expression.rgb(178, 58, 46),
+                Expression.lt(Expression.toNumber(Expression.get("d")), Expression.literal(10)), Expression.rgb(10, 74, 122),
+                Expression.rgb(0, 34, 64)
+            )
+        ),
+        PropertyFactory.textHaloColor(Color.WHITE),
+        PropertyFactory.textHaloWidth(0.8f),
+        PropertyFactory.textAllowOverlap(true),
+        PropertyFactory.textIgnorePlacement(true),
+    )
+    sLayer.minZoom = 9f
+    if (firstSymbol != null) style.addLayerBelow(sLayer, firstSymbol) else style.addLayer(sLayer)
+
     // Nautical seamark overlay (OpenSeaMap raster).
     val tiles = TileSet("2.1.0", "https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png").apply {
         minZoom = 0f; maxZoom = 18f
@@ -236,6 +268,28 @@ private fun installLayers(style: Style) {
             PropertyFactory.circleStrokeWidth(3f),
         )
     )
+
+    lightenBase(style)
+}
+
+/** Repaint the dark basemap to a light nautical palette + readable label text (matches the web chart). */
+private fun lightenBase(style: Style) {
+    style.getLayer("background")?.setProperties(PropertyFactory.backgroundColor(Color.parseColor("#eaf1f8")))
+    style.getLayer("earth")?.setProperties(PropertyFactory.fillColor(Color.parseColor("#f3eddd")))
+    style.getLayer("landcover")?.setProperties(PropertyFactory.fillColor(Color.parseColor("#edefe4")))
+    style.getLayer("landuse_park")?.setProperties(PropertyFactory.fillColor(Color.parseColor("#e3ead7")))
+    style.getLayer("water")?.setProperties(PropertyFactory.fillColor(Color.parseColor("#cfe6fb")))
+    style.layers.forEach { l ->
+        if (l is SymbolLayer && l.id != "soundings-layer" && !l.id.contains("contour")) {
+            l.setProperties(
+                PropertyFactory.textColor(Color.parseColor("#1f3340")),
+                PropertyFactory.textHaloColor(Color.WHITE),
+                PropertyFactory.textHaloWidth(0f),
+            )
+        } else if (l is LineLayer && l.id.contains("road")) {
+            l.setProperties(PropertyFactory.lineColor(Color.parseColor("#d8d2c4")))
+        }
+    }
 }
 
 private fun pushData(holder: MapHolder, state: SeaMapState) {
@@ -248,6 +302,8 @@ private fun pushData(holder: MapHolder, state: SeaMapState) {
     style.getLayer("depth-layer")?.setProperties(PropertyFactory.visibility(depthVis))
     style.getLayer("seachart-layer")?.setProperties(PropertyFactory.visibility(depthVis))
     style.getLayer("contours-layer")?.setProperties(PropertyFactory.visibility(depthVis))
+    style.getLayer("litto-layer")?.setProperties(PropertyFactory.visibility(depthVis))
+    style.getSourceAs<GeoJsonSource>("soundings-dyn")?.setGeoJson(state.soundingsJson)
     val lat = state.meLat; val lon = state.meLon
     val meJson = if (lat != null && lon != null)
         """{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[$lon,$lat]},"properties":{}}]}"""

@@ -69,6 +69,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.maplibre.android.geometry.LatLng
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
 
@@ -122,12 +123,18 @@ private fun SeaMapScreen() {
     var depth by remember { mutableStateOf(true) }
     var locating by remember { mutableStateOf(false) }
     var focusName by remember { mutableStateOf(SeaMikeAgent.focusName) }
+    var depthUnderMe by remember { mutableStateOf<Double?>(null) }
+    var sog by remember { mutableStateOf<Double?>(null) }
+    var wx by remember { mutableStateOf<MarineApi.Weather?>(null) }
+    var showWx by remember { mutableStateOf(false) }
 
     fun loadViewport(w: Double, s: Double, e: Double, n: Double) {
         scope.launch {
-            val raw = MarineApi.rawVessels(w, s, e, n) ?: return@launch
-            mapState.vesselsJson = raw
-            nearCount = runCatching { JSONObject(raw).optJSONArray("features")?.length() ?: 0 }.getOrNull()
+            MarineApi.rawVessels(w, s, e, n)?.let {
+                mapState.vesselsJson = it
+                nearCount = runCatching { JSONObject(it).optJSONArray("features")?.length() ?: 0 }.getOrNull()
+            }
+            MarineApi.rawSoundings(w, s, e, n, 6, 4)?.let { mapState.soundingsJson = it }
             dataNonce++
         }
     }
@@ -142,7 +149,10 @@ private fun SeaMapScreen() {
                 mapState.meLat = la; mapState.meLon = lo
                 SeaMikeAgent.focusLat = la; SeaMikeAgent.focusLon = lo
                 loc.city?.let { SeaMikeAgent.focusName = it; focusName = it }
+                sog = loc.speed?.let { it * 1.94384 }   // m/s -> knots
                 dataNonce++; flyTo = LatLng(la, lo); flyNonce++
+                depthUnderMe = MarineApi.depthAt(la, lo)
+                wx = MarineApi.weather(la, lo)
             }
         }
     }
@@ -163,6 +173,20 @@ private fun SeaMapScreen() {
     }
 
     LaunchedEffect(Unit) { locate() }
+    // Live instruments: poll the shared GPS every 6s for position / speed / depth-under-me.
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(6000)
+            val loc = withContext(Dispatchers.IO) { LocationClient.get(daemonClient) }
+            val la = loc?.lat; val lo = loc?.lon
+            if (la != null && lo != null) {
+                mapState.meLat = la; mapState.meLon = lo
+                sog = loc.speed?.let { it * 1.94384 }
+                dataNonce++
+                depthUnderMe = MarineApi.depthAt(la, lo)
+            }
+        }
+    }
     LaunchedEffect(seamarks) { mapState.seamarks = seamarks; dataNonce++ }
     LaunchedEffect(depth) { mapState.depth = depth; dataNonce++ }
 
@@ -245,15 +269,39 @@ private fun SeaMapScreen() {
             else Icon(Icons.Filled.MyLocation, contentDescription = "My location", tint = Color.Black)
         }
 
-        // Attribution (CC-BY / ODbL / NLOD require credit).
+        // Instruments bar: SOG · depth-under-me · wind (tap wind → full weather)
+        Surface(
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 26.dp),
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f), shadowElevation = 8.dp,
+        ) {
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                InstrumentCell("SOG", sog?.let { "%.1f".format(it) } ?: "–", "kn", MaterialTheme.colorScheme.onSurface)
+                Spacer(Modifier.width(20.dp))
+                InstrumentCell("DEPTH", depthUnderMe?.let { "%.1f".format(it) } ?: "–", "m",
+                    if (depthUnderMe != null && depthUnderMe!! < 3.0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                Spacer(Modifier.width(20.dp))
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { showWx = true }) {
+                    Text("WIND", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(wx?.windKn?.let { "%.0f".format(it) } ?: "–", fontSize = 18.sp, fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary)
+                    Text(wx?.windDir?.let { degToCompass(it) } ?: "kn", fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+
+        // Attribution (CC-BY / ODbL / NLOD / Licence Ouverte require credit).
         Text(
-            "Charts © Kartverket / EMODnet · © OpenStreetMap · seamarks © OpenSeaMap · AIS © Kystverket",
-            modifier = Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = 10.dp, end = 90.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 9.sp,
+            "Charts © SHOM Litto3D / Kartverket / EMODnet · © OSM · seamarks © OpenSeaMap · AIS © Kystverket · wx: Open-Meteo",
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = 6.dp, end = 90.dp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 8.sp,
         )
 
         // Vessel detail sheet
         tapped?.let { v -> VesselSheet(v) { tapped = null } }
+        // Weather sheet
+        if (showWx) wx?.let { w -> WeatherSheet(w, focusName) { showWx = false } }
     }
 }
 
@@ -293,5 +341,52 @@ private fun detailRow(label: String, value: String) {
         Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp,
             modifier = Modifier.width(104.dp))
         Text(value, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun InstrumentCell(label: String, value: String, unit: String, valueColor: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = valueColor)
+        Text(unit, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+private fun degToCompass(deg: Double): String {
+    val dirs = arrayOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+    return dirs[((((deg % 360) + 360) % 360) / 45.0).roundToInt() % 8]
+}
+
+private fun wxDesc(code: Int?): String = when (code) {
+    null -> "–"; 0 -> "Clear"; 1, 2 -> "Partly cloudy"; 3 -> "Overcast"
+    45, 48 -> "Fog"; in 51..57 -> "Drizzle"; in 61..67 -> "Rain"
+    in 71..77 -> "Snow"; in 80..82 -> "Showers"; 95, 96, 99 -> "Thunderstorm"
+    else -> "Code $code"
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.WeatherSheet(w: MarineApi.Weather, place: String, onClose: () -> Unit) {
+    Card(
+        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("🌬  Weather · $place", fontWeight = FontWeight.Bold, fontSize = 17.sp,
+                    color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                IconButton(onClick = onClose) { Icon(Icons.Filled.Close, contentDescription = "Close") }
+            }
+            Spacer(Modifier.height(6.dp))
+            detailRow("Wind", (w.windKn?.let { "%.0f".format(it) } ?: "–") + " kn " + (w.windDir?.let { degToCompass(it) } ?: ""))
+            detailRow("Gusts", w.gustKn?.let { "%.0f kn".format(it) } ?: "–")
+            detailRow("Waves", (w.waveM?.let { "%.1f m".format(it) } ?: "–") + (w.wavePeriodS?.let { " @ %.0f s".format(it) } ?: ""))
+            detailRow("Swell", (w.swellM?.let { "%.1f m".format(it) } ?: "–") + (w.swellDir?.let { " " + degToCompass(it) } ?: ""))
+            detailRow("Sky", wxDesc(w.weatherCode))
+            detailRow("Air", w.tempC?.let { "%.0f °C".format(it) } ?: "–")
+            detailRow("Pressure", w.pressureHpa?.let { "%.0f hPa".format(it) } ?: "–")
+            detailRow("Visibility", w.visibilityM?.let { "%.1f km".format(it / 1000) } ?: "–")
+        }
     }
 }
