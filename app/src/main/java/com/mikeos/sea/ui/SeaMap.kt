@@ -308,17 +308,26 @@ private fun installLayers(style: Style) {
     style.addSource(GeoJsonSource("nav"))
     style.addLayer(
         LineLayer("nav-line", "nav").withProperties(
-            PropertyFactory.lineColor(Color.parseColor("#3AA0FF")),
-            PropertyFactory.lineWidth(2.5f),
-            PropertyFactory.lineDasharray(arrayOf(2f, 2f)),
+            PropertyFactory.lineColor(Color.parseColor("#ffb300")),
+            PropertyFactory.lineWidth(3f),
+            PropertyFactory.lineDasharray(arrayOf(2f, 1.5f)),
+            PropertyFactory.lineCap("round"),
         ).withFilter(Expression.eq(Expression.get("kind"), Expression.literal("course")))
     )
+    // Waypoint pin — bold amber with a dark outline + white centre so it stands out on the blue sea
+    // (the old semi-transparent blue ring was invisible over water).
     style.addLayer(
         CircleLayer("nav-wp", "nav").withProperties(
-            PropertyFactory.circleRadius(9f),
-            PropertyFactory.circleColor(Color.parseColor("#203AA0FF")),
-            PropertyFactory.circleStrokeColor(Color.parseColor("#3AA0FF")),
+            PropertyFactory.circleRadius(11f),
+            PropertyFactory.circleColor(Color.parseColor("#ffb300")),
+            PropertyFactory.circleStrokeColor(Color.parseColor("#12324a")),
             PropertyFactory.circleStrokeWidth(3f),
+        ).withFilter(Expression.eq(Expression.get("kind"), Expression.literal("waypoint")))
+    )
+    style.addLayer(
+        CircleLayer("nav-wp-core", "nav").withProperties(
+            PropertyFactory.circleRadius(3.5f),
+            PropertyFactory.circleColor(Color.WHITE),
         ).withFilter(Expression.eq(Expression.get("kind"), Expression.literal("waypoint")))
     )
     // Red steer-back line from the boat to the man-overboard point (mirrors the course line).

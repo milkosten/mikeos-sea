@@ -409,23 +409,32 @@ private fun SeaMapScreen() {
             color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 8.sp,
         )
 
-        // Waypoint readout (distance / bearing / ETA) — tap to clear
+        // Waypoint readout — a banner at the TOP (below the toolbar), matching the amber pin dropped
+        // on the chart. Kept clear of the speed/instruments so it reads as "navigate to that pin".
+        // Tap the ✕ to remove the waypoint.
         waypoint?.let { wp ->
+            val liveTick = sog   // recompute each GPS tick as the boat moves
             val mLat = mapState.meLat; val mLon = mapState.meLon
             val nm = if (mLat != null && mLon != null) haversineKm(mLat, mLon, wp.first, wp.second) * 0.539957 else null
             val brg = if (mLat != null && mLon != null) bearingDeg(mLat, mLon, wp.first, wp.second) else null
             val etaMin = if (nm != null && (sog ?: 0.0) > 0.3) nm / sog!! * 60.0 else null
             Surface(
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 82.dp)
-                    .clickable { waypoint = null; rebuildNav() },
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.95f), shadowElevation = 6.dp,
+                modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding()
+                    .padding(top = 70.dp),
+                shape = RoundedCornerShape(20.dp),
+                color = Color(0xFFFFB300), shadowElevation = 6.dp,
             ) {
-                Text(
-                    "→ WPT   ${nm?.let { "%.2f NM".format(it) } ?: "–"}   BRG ${brg?.let { "%03.0f°".format(it) } ?: "–"}   ETA ${etaMin?.let { "%.0f min".format(it) } ?: "–"}   ✕",
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)) {
+                    Text(
+                        "⚑ ${nm?.let { "%.2f NM".format(it) } ?: "–"}   ${brg?.let { "%03.0f°".format(it) } ?: "–"}" +
+                            (etaMin?.let { "   ${"%.0f".format(it)} min" } ?: ""),
+                        color = Color(0xFF1A1200), fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                    )
+                    IconButton(onClick = { waypoint = null; rebuildNav() }, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Filled.Close, contentDescription = "Clear waypoint", tint = Color(0xFF1A1200))
+                    }
+                }
             }
         }
 
@@ -439,7 +448,7 @@ private fun SeaMapScreen() {
             val brg = if (mLat != null && mLon != null) bearingDeg(mLat, mLon, m.first, m.second) else null
             Surface(
                 modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding()
-                    .padding(bottom = if (waypoint != null) 128.dp else 84.dp),
+                    .padding(bottom = 84.dp),
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.error, shadowElevation = 8.dp,
             ) {
