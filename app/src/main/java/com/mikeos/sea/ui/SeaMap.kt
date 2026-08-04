@@ -94,8 +94,11 @@ fun SeaMap(
                 holder.map = map
                 map.uiSettings.isRotateGesturesEnabled = true
                 map.uiSettings.isTiltGesturesEnabled = false
+                // Default over the surveyed Côte d'Azur (Litto3D coverage) so depths show on
+                // first launch; the locate FAB flies to the user's real GPS fix.
                 map.cameraPosition = CameraPosition.Builder()
-                    .target(LatLng(state.meLat ?: 59.9, state.meLon ?: 10.72)).zoom(9.0).build()
+                    .target(LatLng(state.meLat ?: 43.695, state.meLon ?: 7.315))
+                    .zoom(if (state.meLat != null) 12.0 else 12.5).build()
 
                 map.setStyle(Style.Builder().fromUri(styleUrl)) { style ->
                     holder.style = style

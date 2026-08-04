@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -16,14 +17,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Anchor
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DirectionsBoat
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Stop
@@ -52,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -81,6 +90,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge() // draw the chart edge-to-edge behind transparent system bars
         SeaMikeAgent.boot(this) // §0 self-registration + heartbeat + hive
 
         val perms = buildList {
@@ -94,6 +104,18 @@ class MainActivity : ComponentActivity() {
                     SeaMapScreen()
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MapIconButton(icon: ImageVector, desc: String, active: Boolean = false, onClick: () -> Unit) {
+    Surface(shape = CircleShape, shadowElevation = 4.dp,
+        color = if (active) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)) {
+        IconButton(onClick = onClick) {
+            Icon(icon, contentDescription = desc,
+                tint = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface)
         }
     }
 }
@@ -119,6 +141,7 @@ private fun SeaMapScreen() {
     var flyTo by remember { mutableStateOf<LatLng?>(null) }
     var flyNonce by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
+    var searchOpen by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<MarineApi.Place>>(emptyList()) }
     var nearCount by remember { mutableStateOf<Int?>(null) }
     var tapped by remember { mutableStateOf<Map<String, String>?>(null) }
@@ -232,62 +255,74 @@ private fun SeaMapScreen() {
             modifier = Modifier.fillMaxSize(),
         )
 
-        // Top overlay: search + Agent Inspector
-        Column(modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-                    shadowElevation = 6.dp,
-                ) {
-                    OutlinedTextField(
-                        value = query, onValueChange = { query = it }, singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("Search a harbour or coastal place…") },
-                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { doSearch() }),
-                    )
+        // Top overlay: icon-first toolbar; search expands only on tap.
+        Column(modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth()
+            .statusBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp)) {
+            if (searchOpen) {
+                Surface(shape = RoundedCornerShape(14.dp), shadowElevation = 6.dp,
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                    modifier = Modifier.fillMaxWidth()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { searchOpen = false; query = ""; results = emptyList() }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close search")
+                        }
+                        OutlinedTextField(
+                            value = query, onValueChange = { query = it }, singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            placeholder = { Text("Harbour or place…") },
+                            trailingIcon = {
+                                if (query.isNotBlank()) IconButton(onClick = { query = ""; results = emptyList() }) {
+                                    Icon(Icons.Filled.Close, contentDescription = "Clear")
+                                }
+                            },
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = { doSearch() }),
+                        )
+                    }
                 }
-                Spacer(Modifier.width(8.dp))
-                Surface(shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f), shadowElevation = 6.dp) {
-                    AgentIconButton(onClick = { AgentInspectorActivity.start(context) })
-                }
-            }
-            if (results.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Column {
-                        results.forEach { p ->
-                            Column(Modifier.fillMaxWidth().clickable { goTo(p) }.padding(12.dp)) {
-                                Text(p.name, fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface)
-                                if (p.label.isNotBlank()) Text(p.label, fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (results.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                        Column {
+                            results.forEach { p ->
+                                Column(Modifier.fillMaxWidth()
+                                    .clickable { goTo(p); searchOpen = false }.padding(12.dp)) {
+                                    Text(p.name, fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface)
+                                    if (p.label.isNotBlank()) Text(p.label, fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
                             }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
                         }
                     }
                 }
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                FilterChip(selected = depth, onClick = { depth = !depth },
-                    label = { Text("Sea chart") })
-                Spacer(Modifier.width(8.dp))
-                FilterChip(selected = seamarks, onClick = { seamarks = !seamarks },
-                    label = { Text("Seamarks") },
-                    leadingIcon = { Icon(Icons.Filled.Anchor, contentDescription = null, modifier = Modifier.width(16.dp).height(16.dp)) })
-                Spacer(Modifier.width(8.dp))
-                Surface(shape = RoundedCornerShape(20.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)) {
-                    Text(
-                        "🌊 ${nearCount ?: "–"} vessels · $focusName",
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface,
-                    )
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    MapIconButton(Icons.Filled.Search, "Search") { searchOpen = true }
+                    Spacer(Modifier.width(8.dp))
+                    MapIconButton(Icons.Filled.Layers, "Sea chart", active = depth) { depth = !depth }
+                    Spacer(Modifier.width(8.dp))
+                    MapIconButton(Icons.Filled.Anchor, "Seamarks", active = seamarks) { seamarks = !seamarks }
+                    Spacer(Modifier.weight(1f))
+                    // Compact live-vessel count
+                    Surface(shape = CircleShape, shadowElevation = 4.dp,
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                            Icon(Icons.Filled.DirectionsBoat, contentDescription = "Vessels nearby",
+                                modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(6.dp))
+                            Text("${nearCount ?: "–"}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Surface(shape = CircleShape, shadowElevation = 4.dp,
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)) {
+                        AgentIconButton(onClick = { AgentInspectorActivity.start(context) })
+                    }
                 }
             }
         }
@@ -338,7 +373,7 @@ private fun SeaMapScreen() {
 
         // Instruments bar: SOG · depth-under-me · wind (tap wind → full weather)
         Surface(
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 26.dp),
+            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 20.dp),
             shape = RoundedCornerShape(14.dp),
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f), shadowElevation = 8.dp,
         ) {
