@@ -47,6 +47,7 @@ class SeaMapState {
     @Volatile var seamarks: Boolean = true
     @Volatile var depth: Boolean = true
     @Volatile var soundingsJson: String = EMPTY_FC
+    @Volatile var trackJson: String = EMPTY_FC
 }
 
 private class MapHolder {
@@ -220,6 +221,18 @@ private fun installLayers(style: Style) {
     style.addSource(RasterSource(SRC_SEA, tiles, 256))
     style.addLayer(RasterLayer("seamark-layer", SRC_SEA).withProperties(PropertyFactory.rasterOpacity(0.9f)))
 
+    // Trailing track — your own path while recording a trip.
+    style.addSource(GeoJsonSource("track"))
+    style.addLayer(
+        LineLayer("track-layer", "track").withProperties(
+            PropertyFactory.lineColor(Color.parseColor("#ff6d3a")),
+            PropertyFactory.lineWidth(3f),
+            PropertyFactory.lineOpacity(0.85f),
+            PropertyFactory.lineCap("round"),
+            PropertyFactory.lineJoin("round"),
+        )
+    )
+
     // Vessels.
     style.addSource(GeoJsonSource(SRC_VESSELS))
     val movingTeal = Expression.rgb(34, 211, 160)
@@ -304,6 +317,7 @@ private fun pushData(holder: MapHolder, state: SeaMapState) {
     style.getLayer("contours-layer")?.setProperties(PropertyFactory.visibility(depthVis))
     style.getLayer("litto-layer")?.setProperties(PropertyFactory.visibility(depthVis))
     style.getSourceAs<GeoJsonSource>("soundings-dyn")?.setGeoJson(state.soundingsJson)
+    style.getSourceAs<GeoJsonSource>("track")?.setGeoJson(state.trackJson)
     val lat = state.meLat; val lon = state.meLon
     val meJson = if (lat != null && lon != null)
         """{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[$lon,$lat]},"properties":{}}]}"""

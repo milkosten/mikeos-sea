@@ -25,6 +25,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Anchor
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -43,6 +45,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -127,6 +130,10 @@ private fun SeaMapScreen() {
     var sog by remember { mutableStateOf<Double?>(null) }
     var wx by remember { mutableStateOf<MarineApi.Weather?>(null) }
     var showWx by remember { mutableStateOf(false) }
+    val track = remember { mutableStateListOf<Pair<Double, Double>>() }
+    var recording by remember { mutableStateOf(false) }
+    var tripDistKm by remember { mutableStateOf(0.0) }
+    var tripMaxSog by remember { mutableStateOf(0.0) }
 
     fun loadViewport(w: Double, s: Double, e: Double, n: Double) {
         scope.launch {
@@ -182,6 +189,16 @@ private fun SeaMapScreen() {
             if (la != null && lo != null) {
                 mapState.meLat = la; mapState.meLon = lo
                 sog = loc.speed?.let { it * 1.94384 }
+                if (recording) {
+                    val last = track.lastOrNull()
+                    val d = if (last != null) haversineKm(last.first, last.second, la, lo) else 0.0
+                    if (last == null || d > 0.006) {   // moved > ~6 m
+                        if (last != null) tripDistKm += d
+                        track.add(la to lo)
+                        sog?.let { if (it > tripMaxSog) tripMaxSog = it }
+                        mapState.trackJson = trackToGeoJson(track)
+                    }
+                }
                 dataNonce++
                 depthUnderMe = MarineApi.depthAt(la, lo)
             }
@@ -258,6 +275,25 @@ private fun SeaMapScreen() {
             }
         }
 
+        // Record-track FAB (above the locate FAB)
+        FloatingActionButton(
+            onClick = {
+                if (recording) recording = false
+                else {
+                    recording = true; track.clear(); tripDistKm = 0.0; tripMaxSog = 0.0
+                    mapState.trackJson = """{"type":"FeatureCollection","features":[]}"""; dataNonce++
+                }
+            },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 84.dp),
+            containerColor = if (recording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.surface,
+        ) {
+            Icon(
+                if (recording) Icons.Filled.Stop else Icons.Filled.FiberManualRecord,
+                contentDescription = "Record track",
+                tint = if (recording) Color.White else MaterialTheme.colorScheme.error,
+            )
+        }
+
         // Locate-me FAB
         FloatingActionButton(
             onClick = { locate() },
@@ -287,6 +323,12 @@ private fun SeaMapScreen() {
                         color = MaterialTheme.colorScheme.primary)
                     Text(wx?.windDir?.let { degToCompass(it) } ?: "kn", fontSize = 9.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (recording) {
+                    Spacer(Modifier.width(20.dp))
+                    InstrumentCell("DIST", "%.1f".format(tripDistKm * 0.539957), "NM", MaterialTheme.colorScheme.onSurface)
+                    Spacer(Modifier.width(20.dp))
+                    InstrumentCell("MAX", "%.1f".format(tripMaxSog), "kn", MaterialTheme.colorScheme.onSurface)
                 }
             }
         }
@@ -389,4 +431,17 @@ private fun androidx.compose.foundation.layout.BoxScope.WeatherSheet(w: MarineAp
             detailRow("Visibility", w.visibilityM?.let { "%.1f km".format(it / 1000) } ?: "–")
         }
     }
+}
+
+private fun haversineKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+    val p = Math.PI / 180
+    val a = 0.5 - Math.cos((lat2 - lat1) * p) / 2 +
+        Math.cos(lat1 * p) * Math.cos(lat2 * p) * (1 - Math.cos((lon2 - lon1) * p)) / 2
+    return 12742 * Math.asin(Math.min(1.0, Math.sqrt(a)))
+}
+
+private fun trackToGeoJson(track: List<Pair<Double, Double>>): String {
+    if (track.size < 2) return """{"type":"FeatureCollection","features":[]}"""
+    val coords = track.joinToString(",") { "[${it.second},${it.first}]" }
+    return """{"type":"Feature","geometry":{"type":"LineString","coordinates":[$coords]},"properties":{}}"""
 }
