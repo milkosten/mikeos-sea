@@ -157,7 +157,7 @@ private fun SeaMapScreen() {
                 mapState.vesselsJson = it
                 nearCount = runCatching { JSONObject(it).optJSONArray("features")?.length() ?: 0 }.getOrNull()
             }
-            MarineApi.rawSoundings(w, s, e, n, 6, 4)?.let { mapState.soundingsJson = it }
+            MarineApi.rawSoundings(w, s, e, n, 8, 5)?.let { mapState.soundingsJson = it }
             dataNonce++
         }
     }
