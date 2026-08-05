@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -30,7 +32,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Anchor
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DirectionsBoat
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.FiberManualRecord
@@ -50,6 +54,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -73,6 +78,9 @@ import com.mikeos.core.ui.AgentIconButton
 import com.mikeos.core.ui.AgentInspectorActivity
 import com.mikeos.sea.agent.SeaMikeAgent
 import com.mikeos.sea.net.MarineApi
+import com.mikeos.sea.trips.TripDatabase
+import com.mikeos.sea.trips.TripEntity
+import com.mikeos.sea.trips.TripPointEntity
 import com.mikeos.sea.ui.SeaMap
 import com.mikeos.sea.ui.SeaMapState
 import com.mikeos.sea.ui.theme.MikeSeaTheme
@@ -159,6 +167,13 @@ private fun SeaMapScreen() {
     var tripMaxSog by remember { mutableStateOf(0.0) }
     var waypoint by remember { mutableStateOf<Pair<Double, Double>?>(null) }
     var mob by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    // Trip history (persisted). currentTripId is non-null while a recording is in progress.
+    val tripDao = remember { TripDatabase.get(context).tripDao() }
+    var currentTripId by remember { mutableStateOf<Long?>(null) }
+    var tripStartMs by remember { mutableStateOf(0L) }
+    var showTrips by remember { mutableStateOf(false) }
+    var viewingTrip by remember { mutableStateOf<TripEntity?>(null) }
+    val trips by tripDao.allTrips().collectAsState(initial = emptyList())
 
     fun rebuildNav() {
         val me = mapState.meLat?.let { la -> mapState.meLon?.let { lo -> la to lo } }
@@ -219,30 +234,65 @@ private fun SeaMapScreen() {
         flyTo = LatLng(p.lat, p.lon); flyNonce++
     }
 
+    // Load a saved trip's points, draw its track on the chart, and centre the camera on it.
+    fun openTrip(t: TripEntity) {
+        showTrips = false; viewingTrip = t
+        scope.launch {
+            val pts = runCatching { tripDao.points(t.id) }.getOrDefault(emptyList())
+            if (pts.isNotEmpty()) {
+                val coords = pts.joinToString(",") { "[${it.lon},${it.lat}]" }
+                mapState.trackJson =
+                    """{"type":"Feature","geometry":{"type":"LineString","coordinates":[$coords]},"properties":{}}"""
+                dataNonce++
+                flyTo = LatLng(pts.sumOf { it.lat } / pts.size, pts.sumOf { it.lon } / pts.size); flyNonce++
+            }
+        }
+    }
+
+    fun closeTripView() {
+        viewingTrip = null
+        mapState.trackJson = if (recording) trackToGeoJson(track)
+            else """{"type":"FeatureCollection","features":[]}"""
+        dataNonce++
+    }
+
     LaunchedEffect(Unit) { locate() }
-    // Live instruments: poll the shared GPS every 6s for position / speed / depth-under-me.
+    // Live instruments + trip logger: poll the shared GPS every 5s for position/speed/depth, and
+    // while recording, persist one sample per tick (position + speed + depth + wind) to the trip DB.
     LaunchedEffect(Unit) {
         while (true) {
-            kotlinx.coroutines.delay(6000)
+            kotlinx.coroutines.delay(5000)
             val loc = withContext(Dispatchers.IO) { LocationClient.get(daemonClient) }
             val la = loc?.lat; val lo = loc?.lon
             if (la != null && lo != null) {
                 mapState.meLat = la; mapState.meLon = lo
                 sog = loc.speed?.let { it * 1.94384 }
-                if (recording) {
+                val depthHere = MarineApi.depthAt(la, lo)
+                depthUnderMe = depthHere
+                val tripId = currentTripId
+                if (recording && tripId != null) {
                     val last = track.lastOrNull()
                     val d = if (last != null) haversineKm(last.first, last.second, la, lo) else 0.0
-                    if (last == null || d > 0.006) {   // moved > ~6 m
+                    if (last == null || d > 0.006) {   // moved > ~6 m — extend the drawn track
                         if (last != null) tripDistKm += d
                         track.add(la to lo)
-                        sog?.let { if (it > tripMaxSog) tripMaxSog = it }
                         mapState.trackJson = trackToGeoJson(track)
+                    }
+                    sog?.let { if (it > tripMaxSog) tripMaxSog = it }
+                    // Persist a time sample every tick, even when stationary, so the log is a real
+                    // 5s time series. Best-effort — a DB hiccup must not break the live map.
+                    runCatching {
+                        tripDao.insertPoint(
+                            TripPointEntity(
+                                tripId = tripId, ts = System.currentTimeMillis(),
+                                lat = la, lon = lo, sogKn = sog, depthM = depthHere, windKn = wx?.windKn,
+                            )
+                        )
                     }
                 }
                 // Redraw the me→waypoint / me→MOB steer lines from the new position.
                 if (mob != null || waypoint != null) rebuildNav()
                 dataNonce++
-                depthUnderMe = MarineApi.depthAt(la, lo)
             }
         }
     }
@@ -308,6 +358,8 @@ private fun SeaMapScreen() {
                     MapIconButton(Icons.Filled.Layers, "Sea chart", active = depth) { depth = !depth }
                     Spacer(Modifier.width(8.dp))
                     MapIconButton(Icons.Filled.Anchor, "Seamarks", active = seamarks) { seamarks = !seamarks }
+                    Spacer(Modifier.width(8.dp))
+                    MapIconButton(Icons.Filled.History, "Trips") { showTrips = true }
                     Spacer(Modifier.weight(1f))
                     // Compact live-vessel count
                     Surface(shape = CircleShape, shadowElevation = 4.dp,
@@ -347,10 +399,30 @@ private fun SeaMapScreen() {
         // Record-track FAB (above the locate FAB)
         FloatingActionButton(
             onClick = {
-                if (recording) recording = false
-                else {
+                if (recording) {
+                    // Stop: finalise the trip row with its aggregates.
+                    recording = false
+                    val id = currentTripId; currentTripId = null
+                    val started = tripStartMs
+                    val distKm = tripDistKm; val maxKn = tripMaxSog
+                    if (id != null) scope.launch {
+                        val ended = System.currentTimeMillis()
+                        val hrs = (ended - started) / 3_600_000.0
+                        val avgKn = if (hrs > 0) (distKm * 0.539957) / hrs else 0.0
+                        val n = runCatching { tripDao.pointCount(id) }.getOrDefault(0)
+                        runCatching { tripDao.finishTrip(id, ended, distKm, maxKn, avgKn, n) }
+                    }
+                } else {
+                    // Start: new trip row, reset live counters, clear the drawn track.
                     recording = true; track.clear(); tripDistKm = 0.0; tripMaxSog = 0.0
+                    viewingTrip = null
                     mapState.trackJson = """{"type":"FeatureCollection","features":[]}"""; dataNonce++
+                    tripStartMs = System.currentTimeMillis()
+                    scope.launch {
+                        currentTripId = runCatching {
+                            tripDao.insertTrip(TripEntity(startedAt = tripStartMs))
+                        }.getOrNull()
+                    }
                 }
             },
             modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 84.dp),
@@ -472,11 +544,96 @@ private fun SeaMapScreen() {
             }
         }
 
+        // Viewing a saved trip: a stats banner at the top with a close ✕ (clears the drawn track).
+        viewingTrip?.let { t ->
+            Surface(
+                modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 70.dp),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), shadowElevation = 6.dp,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)) {
+                    Column {
+                        Text(fmtTripDate(t.startedAt), fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurface)
+                        Text("${"%.2f".format(t.distanceKm * 0.539957)} NM · " +
+                            "${fmtDuration((t.endedAt ?: t.startedAt) - t.startedAt)} · max ${"%.1f".format(t.maxSogKn)} kn",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton(onClick = { closeTripView() }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Close trip",
+                            tint = MaterialTheme.colorScheme.onSurface)
+                    }
+                }
+            }
+        }
+
+        // Trip history list — full-screen overlay.
+        if (showTrips) {
+            Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                Column(Modifier.fillMaxSize().statusBarsPadding()) {
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)) {
+                        IconButton(onClick = { showTrips = false }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                        Text("Trips", fontSize = 20.sp, fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f))
+                        Text("${trips.size}", color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(end = 16.dp))
+                    }
+                    if (trips.isEmpty()) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("No trips yet — hit ● to record one.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    } else {
+                        LazyColumn(Modifier.fillMaxSize()) {
+                            items(trips, key = { it.id }) { t ->
+                                TripRow(t, onOpen = { openTrip(t) },
+                                    onDelete = { scope.launch { runCatching { tripDao.deleteTrip(t.id) } } })
+                                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Vessel detail sheet
         tapped?.let { v -> VesselSheet(v) { tapped = null } }
         // Weather sheet
         if (showWx) wx?.let { w -> WeatherSheet(w, focusName) { showWx = false } }
     }
+}
+
+@Composable
+private fun TripRow(t: TripEntity, onOpen: () -> Unit, onDelete: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().clickable { onOpen() }.padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Column(Modifier.weight(1f)) {
+            Text(fmtTripDate(t.startedAt), fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface)
+            Text("${"%.2f".format(t.distanceKm * 0.539957)} NM · " +
+                "${fmtDuration((t.endedAt ?: t.startedAt) - t.startedAt)} · " +
+                "max ${"%.1f".format(t.maxSogKn)} kn · avg ${"%.1f".format(t.avgSogKn)} kn",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (t.endedAt == null) Text("recording…", fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.error)
+        }
+        IconButton(onClick = onDelete) {
+            Icon(Icons.Filled.Delete, contentDescription = "Delete trip",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+private fun fmtTripDate(ms: Long): String =
+    java.text.SimpleDateFormat("EEE d MMM · HH:mm", java.util.Locale.getDefault()).format(java.util.Date(ms))
+
+private fun fmtDuration(ms: Long): String {
+    val s = (ms / 1000).coerceAtLeast(0); val h = s / 3600; val m = (s % 3600) / 60
+    return if (h > 0) "${h}h ${m}m" else "${m}m"
 }
 
 @Composable
