@@ -14,8 +14,8 @@ android {
         applicationId = "com.mikeos.sea"
         minSdk = 31
         targetSdk = 35
-        versionCode = 19
-        versionName = "0.10.0-trip-history"
+        versionCode = 20
+        versionName = "0.11.0-seascape"
 
         // MikeDaemon runs ON the phone (loopback). Auth token is pinned for dev.
         buildConfigField("String", "DAEMON_BASE_URL", "\"https://127.0.0.1:7743\"")

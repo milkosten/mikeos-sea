@@ -26,13 +26,16 @@ import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.layers.RasterLayer
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.TileSet
+import org.maplibre.android.style.sources.VectorSource
 
 private const val SRC_VESSELS = "vessels"
 private const val SRC_ME = "me"
@@ -166,17 +169,77 @@ fun SeaMap(
 }
 
 private fun installLayers(style: Style) {
-    // Bathymetry — EMODnet depth-shaded chart (CC-BY). Inserted BELOW the base map's first label
-    // layer, so European seas render as a real depth chart (shaded by depth + coastlines) while OSM
-    // place labels stay on top. Where EMODnet has no tile (outside Europe) it draws nothing and the
-    // OSM base shows through. CC-BY: "© EMODnet Bathymetry".
+    // Global open nautical chart — Open Waters Seascape (CC BY 4.0), the SAME sea map as
+    // sea.osmike.com: depth-area fills, isobath contours + labels, and worldwide spot soundings,
+    // sampled from a vector tile source. Inserted BELOW the base map's first label layer so OSM
+    // place labels stay on top. This replaces the old EMODnet raster with a proper vector chart.
     val firstSymbol = style.layers.firstOrNull { it is SymbolLayer }?.id
-    val depthTiles = TileSet(
-        "2.1.0", "https://tiles.emodnet-bathymetry.eu/2020/baselayer/web_mercator/{z}/{x}/{y}.png"
-    ).apply { minZoom = 0f; maxZoom = 12f }
-    style.addSource(RasterSource("depth", depthTiles, 256))
-    val depthLayer = RasterLayer("depth-layer", "depth").withProperties(PropertyFactory.rasterOpacity(1.0f))
-    if (firstSymbol != null) style.addLayerBelow(depthLayer, firstSymbol) else style.addLayer(depthLayer)
+    fun addBelowSymbols(layer: org.maplibre.android.style.layers.Layer) {
+        if (firstSymbol != null) style.addLayerBelow(layer, firstSymbol) else style.addLayer(layer)
+    }
+    style.addSource(VectorSource("seascape-vector", "https://tiles.openwaters.io/seascape/vector.json"))
+
+    // Depth-area graduated fill (source-layer "depare"): green intertidal, then a shoal→deep blue ramp.
+    val depthAreas = FillLayer("depth-areas", "seascape-vector").apply { sourceLayer = "depare"; minZoom = 6f }
+        .withProperties(
+            PropertyFactory.fillColor(
+                Expression.switchCase(
+                    Expression.not(Expression.has("drval1")), Expression.color(Color.parseColor("#cfe6fb")),
+                    Expression.lt(Expression.get("drval1"), Expression.literal(0)), Expression.color(Color.parseColor("#a8d5ba")),
+                    Expression.switchCase(
+                        Expression.lt(Expression.get("drval1"), Expression.literal(1.99)), Expression.color(Color.parseColor("#3fa2e4")),
+                        Expression.step(Expression.get("drval1"), Expression.color(Color.parseColor("#5db5f0")),
+                            Expression.stop(1.99, Expression.color(Color.parseColor("#7fc7f8"))),
+                            Expression.stop(4.99, Expression.color(Color.parseColor("#a5d9fb"))),
+                            Expression.stop(9.99, Expression.color(Color.parseColor("#c9e9fd"))),
+                            Expression.stop(19.99, Expression.color(Color.parseColor("#e2f2fd"))),
+                            Expression.stop(49.99, Expression.color(Color.parseColor("#eef7ff"))))
+                    )
+                )
+            ),
+            PropertyFactory.fillOpacity(0.9f),
+        ).withFilter(Expression.not(Expression.has("sys")))
+    addBelowSymbols(depthAreas)
+
+    // Isobath contour lines (source-layer "contours").
+    val contourLines = LineLayer("contour-lines", "seascape-vector").apply { sourceLayer = "contours"; minZoom = 6f }
+        .withProperties(
+            PropertyFactory.lineColor(Color.parseColor("#4a7a9c")),
+            PropertyFactory.lineWidth(0.6f),
+            PropertyFactory.lineOpacity(0.6f),
+        ).withFilter(Expression.neq(Expression.get("sys"), Expression.literal("ft")))
+    addBelowSymbols(contourLines)
+
+    // Contour depth labels ("12m") along the isobaths — dark text, no halo (per the app's no-halo rule).
+    val contourLabels = SymbolLayer("contour-labels", "seascape-vector").apply { sourceLayer = "contours"; minZoom = 8f }
+        .withProperties(
+            PropertyFactory.symbolPlacement(Property.SYMBOL_PLACEMENT_LINE),
+            PropertyFactory.textField(Expression.concat(Expression.toString(Expression.get("depth_abs_m")), Expression.literal("m"))),
+            PropertyFactory.textFont(arrayOf("Noto Sans Regular")),
+            PropertyFactory.textSize(11f),
+            PropertyFactory.textMaxAngle(30f),
+            PropertyFactory.textPadding(50f),
+            PropertyFactory.textColor(Color.parseColor("#003366")),
+            PropertyFactory.textHaloWidth(0f),
+        ).withFilter(Expression.neq(Expression.get("sys"), Expression.literal("ft")))
+    addBelowSymbols(contourLabels)
+
+    // Worldwide spot soundings from the Seascape vector chart (source-layer "soundings").
+    val seaSoundings = SymbolLayer("seascape-soundings", "seascape-vector").apply { sourceLayer = "soundings"; minZoom = 7f }
+        .withProperties(
+            PropertyFactory.textField(Expression.toString(Expression.get("depth_m"))),
+            PropertyFactory.textFont(arrayOf("Noto Sans Regular")),
+            PropertyFactory.textSize(11f),
+            PropertyFactory.textPadding(6f),
+            PropertyFactory.textColor(
+                Expression.switchCase(
+                    Expression.lte(Expression.get("depth_m"), Expression.literal(2)), Expression.color(Color.parseColor("#000000")),
+                    Expression.color(Color.parseColor("#003366"))
+                )
+            ),
+            PropertyFactory.textHaloWidth(0f),
+        )
+    addBelowSymbols(seaSoundings)
 
     // Kartverket Sjøkart — the OFFICIAL Norwegian nautical chart (NLOD): depth areas, soundings,
     // buoys, beacons, lights, fairways/channels, port entrances. XYZ cache (note {z}/{y}/{x} order).
@@ -187,16 +250,6 @@ private fun installLayers(style: Style) {
     style.addSource(RasterSource("seachart", chartTiles, 256))
     val chartLayer = RasterLayer("seachart-layer", "seachart").withProperties(PropertyFactory.rasterOpacity(1.0f))
     if (firstSymbol != null) style.addLayerBelow(chartLayer, firstSymbol) else style.addLayer(chartLayer)
-
-    // EMODnet depth contours (isobaths) via our own tile proxy (marine-api re-serves EMODnet's
-    // contour WMS as XYZ). Transparent lines over the depth shading — covers all European seas
-    // incl. the whole French coast, where SHOM's official chart isn't openly licensed.
-    val contourTiles = TileSet(
-        "2.1.0", "https://marine-api.osmike.com/contours/{z}/{x}/{y}.png"
-    ).apply { minZoom = 0f; maxZoom = 12f }
-    style.addSource(RasterSource("contours", contourTiles, 256))
-    val contourLayer = RasterLayer("contours-layer", "contours").withProperties(PropertyFactory.rasterOpacity(0.9f))
-    if (firstSymbol != null) style.addLayerBelow(contourLayer, firstSymbol) else style.addLayer(contourLayer)
 
     // SHOM Litto3D 1m survey depth (Licence Ouverte) — real harbour bathymetry (French coast, expanding).
     val littoTiles = TileSet("2.1.0", "https://marine.osmike.com/litto/{z}/{x}/{y}.png").apply { minZoom = 0f; maxZoom = 18f }
@@ -359,7 +412,7 @@ private fun lightenBase(style: Style) {
     style.getLayer("landuse_park")?.setProperties(PropertyFactory.fillColor(Color.parseColor("#e3ead7")))
     style.getLayer("water")?.setProperties(PropertyFactory.fillColor(Color.parseColor("#cfe6fb")))
     style.layers.forEach { l ->
-        if (l is SymbolLayer && l.id != "soundings-layer" && !l.id.contains("contour")) {
+        if (l is SymbolLayer && !l.id.contains("sound") && !l.id.contains("contour")) {
             l.setProperties(
                 PropertyFactory.textColor(Color.parseColor("#1f3340")),
                 PropertyFactory.textHaloColor(Color.WHITE),
@@ -378,10 +431,11 @@ private fun pushData(holder: MapHolder, state: SeaMapState) {
         PropertyFactory.visibility(if (state.seamarks) "visible" else "none")
     )
     val depthVis = if (state.depth) "visible" else "none"
-    style.getLayer("depth-layer")?.setProperties(PropertyFactory.visibility(depthVis))
-    style.getLayer("seachart-layer")?.setProperties(PropertyFactory.visibility(depthVis))
-    style.getLayer("contours-layer")?.setProperties(PropertyFactory.visibility(depthVis))
-    style.getLayer("litto-layer")?.setProperties(PropertyFactory.visibility(depthVis))
+    // Seascape base chart (fills/contours/labels/soundings) + Kartverket + Litto — toggled together.
+    listOf("depth-areas", "contour-lines", "contour-labels", "seascape-soundings",
+        "seachart-layer", "litto-layer").forEach {
+        style.getLayer(it)?.setProperties(PropertyFactory.visibility(depthVis))
+    }
     style.getSourceAs<GeoJsonSource>("soundings-dyn")?.setGeoJson(state.soundingsJson)
     style.getSourceAs<GeoJsonSource>("track")?.setGeoJson(state.trackJson)
     style.getSourceAs<GeoJsonSource>("nav")?.setGeoJson(state.navJson)
