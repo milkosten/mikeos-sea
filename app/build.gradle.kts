@@ -14,7 +14,7 @@ android {
         applicationId = "com.mikeos.sea"
         minSdk = 31
         targetSdk = 35
-        versionCode = 20
+        versionCode = 22
         versionName = "0.11.0-seascape"
 
         // MikeDaemon runs ON the phone (loopback). Auth token is pinned for dev.
